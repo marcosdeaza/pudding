@@ -22,14 +22,6 @@ def load_config():
     model = os.environ.get("PUDDING_MODEL")
     api_key = os.environ.get("PUDDING_API_KEY")
 
-    # If OpenAI key provided
-    if not api_key and os.environ.get("OPENAI_API_KEY"):
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_url:
-            api_url = "https://api.openai.com/v1/chat/completions"
-        if not model:
-            model = "gpt-4o-mini"
-
     # If DeepSeek key provided
     if not api_key and os.environ.get("DEEPSEEK_API_KEY"):
         api_key = os.environ.get("DEEPSEEK_API_KEY")
@@ -51,6 +43,15 @@ def load_config():
                         model = "deepseek-chat"
         except Exception:
             pass
+
+    # If OpenAI key provided (ignore dummy ollama keys)
+    if not api_key and os.environ.get("OPENAI_API_KEY") and os.environ.get("OPENAI_API_KEY") != "ollama-local":
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_url:
+            api_url = "https://api.openai.com/v1/chat/completions"
+        if not model:
+            model = "gpt-4o-mini"
+
 
     config = {
         "api_url": api_url or "https://api.deepseek.com/v1/chat/completions",
