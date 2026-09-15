@@ -1,0 +1,68 @@
+# ═══════════════════════════════════════════════════
+#  Starship — Noir Monochrome Prompt
+# ═══════════════════════════════════════════════════
+
+format = """$directory$git_branch$git_status$character"""
+
+add_newline = false
+
+[directory]
+truncation_length = 2
+truncation_symbol = "…/"
+style = "bold #d4d4d8"
+read_only = " "
+home_symbol = "~"
+
+[git_branch]
+format = " [$symbol$branch]($style) "
+symbol = " "
+style = "#71717a"
+truncation_length = 20
+
+[git_status]
+format = '[$all_status$ahead_behind]($style)'
+style = "#a1a1aa"
+conflicted = "="
+ahead = "⇡${count}"
+behind = "⇣${count}"
+diverged = "⇕⇡${ahead_count}⇣${behind_count}"
+untracked = "?"
+stashed = ""
+modified = "!"
+staged = "+"
+renamed = "»"
+deleted = "✘"
+
+[character]
+success_symbol = "[›](bold #d4d4d8)"
+error_symbol = "[›](bold #71717a)"
+
+# Disabled noisy modules
+[package]
+disabled = true
+[nodejs]
+disabled = true
+[python]
+disabled = true
+[rust]
+disabled = true
+[golang]
+disabled = true
+[docker_context]
+disabled = true
+[aws]
+disabled = true
+[gcloud]
+disabled = true
+[kubernetes]
+disabled = true
+[cmd_duration]
+disabled = true
+[username]
+disabled = true
+[hostname]
+disabled = true
+[time]
+disabled = true
+[battery]
+disabled = true

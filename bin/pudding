@@ -1,0 +1,355 @@
+#!/usr/bin/env python3
+"""
+pudding: Ultra-fast, zero-dependency natural language shell bridge.
+Supports DeepSeek, OpenAI (ChatGPT), Ollama, Groq, and any OpenAI-compatible endpoint.
+"""
+
+import sys
+import os
+import re
+import json
+import subprocess
+import urllib.request
+import urllib.error
+
+DEFAULT_CONFIG_PATH = os.path.expanduser("~/.config/pudding/config.json")
+LEGACY_CONFIG_PATH = os.path.expanduser("~/.config/ai-sh/config.json")
+DEEPSEEK_KEY_FILE = os.path.expanduser("~/.deepseek_key")
+
+def load_config():
+    # Detect environment defaults
+    api_url = os.environ.get("PUDDING_API_BASE")
+    model = os.environ.get("PUDDING_MODEL")
+    api_key = os.environ.get("PUDDING_API_KEY")
+
+    # If OpenAI key provided
+    if not api_key and os.environ.get("OPENAI_API_KEY"):
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_url:
+            api_url = "https://api.openai.com/v1/chat/completions"
+        if not model:
+            model = "gpt-4o-mini"
+
+    # If DeepSeek key provided
+    if not api_key and os.environ.get("DEEPSEEK_API_KEY"):
+        api_key = os.environ.get("DEEPSEEK_API_KEY")
+        if not api_url:
+            api_url = "https://api.deepseek.com/v1/chat/completions"
+        if not model:
+            model = "deepseek-chat"
+
+    # Fallback to key file
+    if not api_key and os.path.exists(DEEPSEEK_KEY_FILE):
+        try:
+            with open(DEEPSEEK_KEY_FILE, "r", encoding="utf-8") as f:
+                k = f.read().strip()
+                if k:
+                    api_key = k
+                    if not api_url:
+                        api_url = "https://api.deepseek.com/v1/chat/completions"
+                    if not model:
+                        model = "deepseek-chat"
+        except Exception:
+            pass
+
+    config = {
+        "api_url": api_url or "https://api.deepseek.com/v1/chat/completions",
+        "model": model or "deepseek-chat",
+        "api_key": api_key or ""
+    }
+
+    # Load from config file
+    for p in [DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH]:
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                    config.update({k: v for k, v in cfg.items() if v})
+                    break
+            except Exception:
+                pass
+
+    return config
+
+CONFIG = load_config()
+
+def call_api(messages, max_tokens=250, temperature=0.0):
+    is_local = any(h in CONFIG["api_url"] for h in ["localhost", "127.0.0.1", "0.0.0.0"])
+    if not CONFIG["api_key"] and not is_local:
+        return "NONE"
+
+    payload = {
+        "model": CONFIG["model"],
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens
+    }
+    
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "pudding/1.0"
+    }
+    if CONFIG["api_key"]:
+        headers["Authorization"] = f"Bearer {CONFIG['api_key']}"
+
+    req = urllib.request.Request(
+        CONFIG["api_url"],
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers
+    )
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+        return data["choices"][0]["message"].get("content", "").strip()
+
+def get_quick_sys_metrics():
+    """Gathers real-time memory and disk metrics in <5ms."""
+    parts = []
+    # macOS Memory
+    try:
+        total_bytes = int(subprocess.check_output(['sysctl', '-n', 'hw.memsize']).decode().strip())
+        total_ram = round(total_bytes / (1024**3), 1)
+        vm = subprocess.check_output(['vm_stat']).decode()
+        page_match = re.search(r'page size of (\d+) bytes', vm)
+        page_size = int(page_match.group(1)) if page_match else 16384
+        stats = {}
+        for line in vm.splitlines():
+            m = re.match(r'Pages (\w+[^:]*):\s+(\d+)\.', line.strip())
+            if m:
+                stats[m.group(1).strip()] = int(m.group(2))
+        avail_bytes = (stats.get('free', 0) + stats.get('inactive', 0) + stats.get('speculative', 0) + stats.get('purgeable', 0)) * page_size
+        avail_ram = round(avail_bytes / (1024**3), 1)
+        used_ram = round(total_ram - avail_ram, 1)
+        parts.append(f"RAM_TOTAL: {total_ram} GB | RAM_DISPONIBLE: {avail_ram} GB | RAM_EN_USO: {used_ram} GB")
+    except Exception:
+        pass
+
+    # Disk
+    try:
+        df = subprocess.check_output(['df', '-h', '/']).decode().splitlines()[1].split()
+        parts.append(f"DISCO_TOTAL: {df[1]} | DISCO_DISPONIBLE: {df[3]} | DISCO_USADO_PCT: {df[4]}")
+    except Exception:
+        pass
+
+    return "\n".join(parts)
+
+INTENT_PROMPT = """You are an expert Unix/macOS shell assistant.
+Classify the user request into:
+1. "info": Asking for system information, resources, hardware, network, or status.
+   CRITICAL: Even if phrased conversationally or politely (e.g. 'puedes ver...', 'me dices...', 'mira...', 'quiero saber...', 'a ver...'), if it asks about system resources (cpu, ram, memory, disk, network, ip, ports, battery, processes, os version), IT IS ALWAYS "info"!
+   - Memory/Disk: "SPECIAL_SYS_METRICS"
+   - CPU usage/processes: "ps -eo %cpu,comm | sort -k1 -rn | head -8"
+   - Public/Local IP: "ifconfig en0 | grep 'inet '; curl -s --max-time 2 ifconfig.me 2>/dev/null"
+   - Open listening ports: "lsof -iTCP -sTCP:LISTEN -P -n"
+   - Battery: "pmset -g batt"
+   - OS version: "sw_vers"
+
+2. "action": Terminal execution (e.g. "entra a descargas", "crea carpeta x y entra", "haz un escaneo nmap a 10.0.0.1", "actualiza brew").
+   - Support chained commands with "&&" or ";" if multiple steps were requested.
+   - Output the exact shell command(s). Never prepend natural words like "entra".
+
+3. "none": ONLY pure greetings with no question about the system or tasks ("hola", "hola q tal", "buenas").
+
+Output ONLY valid raw JSON:
+For info: {"type": "info", "inspect_cmd": "<command>"}
+For action: {"type": "action", "cmd": "<command>"}
+For none: {"type": "none"}
+"""
+
+def handle_query(query):
+    clean_query = query.strip().rstrip("?¿!. ")
+    if not clean_query:
+        print("NONE")
+        return
+
+    cwd = os.getcwd()
+    user_msg = f"Current working directory: {cwd}\nUser request: {clean_query}"
+    
+    try:
+        raw_res = call_api([
+            {"role": "system", "content": INTENT_PROMPT},
+            {"role": "user", "content": user_msg}
+        ], max_tokens=250)
+        
+        clean_res = raw_res
+        if "```" in clean_res:
+            clean_res = clean_res.replace("```json", "").replace("```", "").strip()
+        
+        parsed = json.loads(clean_res)
+        q_type = parsed.get("type", "none")
+        
+        if q_type == "action":
+            cmd = parsed.get("cmd", "").strip()
+            if cmd.startswith("$ ") or cmd.startswith("# "):
+                cmd = cmd[2:].strip()
+            print(f"ACTION:{cmd}")
+            return
+            
+        elif q_type == "info":
+            inspect_cmd = parsed.get("inspect_cmd", "").strip()
+            if inspect_cmd == "SPECIAL_SYS_METRICS" or any(w in clean_query.lower() for w in ["memoria", "ram", "disco", "almacenamiento", "espacio"]):
+                raw_out = get_quick_sys_metrics()
+            else:
+                try:
+                    raw_out = subprocess.check_output(
+                        inspect_cmd,
+                        shell=True,
+                        timeout=3,
+                        stderr=subprocess.STDOUT
+                    ).decode("utf-8", errors="ignore")
+                except Exception as e:
+                    raw_out = f"Error: {e}"
+            
+            summary_prompt = [
+                {"role": "system", "content": (
+                    "Eres un asistente de terminal para un desarrollador. "
+                    "REGLAS DE FORMATO ESTRICTAS: "
+                    "1. CERO EMOJIS. No uses absolutamente ningún emoji. "
+                    "2. CERO ASTERISCOS ni formato markdown crudo (no uses **negrita** ni `código`). "
+                    "3. Texto plano, sobrio, limpio, sin ruido visual, estilo terminal Unix minimalista. "
+                    "4. Si la pregunta es sobre memoria/almacenamiento: "
+                    "muestra RAM y Disco de forma limpia en 2 líneas: "
+                    "RAM: X GB libres de Y GB (Z GB en uso)\n"
+                    "Disco: X GB libres de Y GB "
+                    "5. Si la pregunta es sobre CPU: "
+                    "muestra el consumo y los 2-3 procesos más activos en 1 sola línea limpia: "
+                    "CPU: X% en uso (top: proc1 Y%, proc2 Z%) "
+                    "6. Sé breve, funcional y sin introducciones."
+                )},
+                {"role": "user", "content": f"Pregunta: {clean_query}\nDatos reales del sistema:\n{raw_out[:2000]}"}
+            ]
+            answer = call_api(summary_prompt, max_tokens=180, temperature=0.1)
+            answer = re.sub(r'[*`_]', '', answer).strip()
+            print(f"INFO:{answer}")
+            return
+            
+        else:
+            print("NONE")
+            return
+            
+    except Exception:
+        try:
+            fallback = call_api([
+                {"role": "system", "content": "You are a shell command translator. Output ONLY the raw command. No markdown, no commentary."},
+                {"role": "user", "content": clean_query}
+            ], max_tokens=150)
+            if fallback and not fallback.startswith("```"):
+                print(f"ACTION:{fallback.strip()}")
+            else:
+                print("NONE")
+        except Exception:
+            print("NONE")
+
+def stream_chat(prompt):
+    is_local = any(h in CONFIG["api_url"] for h in ["localhost", "127.0.0.1", "0.0.0.0"])
+    if not CONFIG["api_key"] and not is_local:
+        print("  ✗ Configura tu API key en ~/.config/pudding/config.json o con export PUDDING_API_KEY=...")
+        return
+
+    payload = {
+        "model": CONFIG["model"],
+        "messages": [
+            {"role": "system", "content": "You are a helpful expert Unix/macOS and cybersecurity terminal assistant. Provide concise, clean text answers without emoji spam."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.3,
+        "stream": True
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "pudding/1.0"
+    }
+    if CONFIG["api_key"]:
+        headers["Authorization"] = f"Bearer {CONFIG['api_key']}"
+
+    req = urllib.request.Request(
+        CONFIG["api_url"],
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            for line in r:
+                line = line.decode("utf-8", errors="ignore").strip()
+                if line.startswith("data: ") and line != "data: [DONE]":
+                    try:
+                        chunk = json.loads(line[6:])
+                        delta = chunk["choices"][0]["delta"].get("content")
+                        if delta:
+                            print(delta, end="", flush=True)
+                    except Exception:
+                        pass
+        print()
+    except Exception as e:
+        print(f"\n  ✗ Error: {e}")
+
+def interactive_chat():
+    print(f"\033[1;37mpudding interactive chat ({CONFIG['model']})\033[0m (escribe 'exit' para salir)\n")
+    history = [{"role": "system", "content": "You are a helpful expert Unix and cybersecurity terminal assistant. Keep responses clean and noise-free."}]
+    
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "pudding/1.0"
+    }
+    if CONFIG["api_key"]:
+        headers["Authorization"] = f"Bearer {CONFIG['api_key']}"
+
+    while True:
+        try:
+            user_input = input("\033[1;37m› \033[0m").strip()
+            if not user_input:
+                continue
+            if user_input.lower() in ["exit", "quit", "salir"]:
+                break
+            
+            history.append({"role": "user", "content": user_input})
+            payload = {
+                "model": CONFIG["model"],
+                "messages": history,
+                "temperature": 0.3,
+                "stream": True
+            }
+            req = urllib.request.Request(
+                CONFIG["api_url"],
+                data=json.dumps(payload).encode("utf-8"),
+                headers=headers
+            )
+            full_reply = []
+            with urllib.request.urlopen(req, timeout=15) as r:
+                for line in r:
+                    line = line.decode("utf-8", errors="ignore").strip()
+                    if line.startswith("data: ") and line != "data: [DONE]":
+                        try:
+                            chunk = json.loads(line[6:])
+                            delta = chunk["choices"][0]["delta"].get("content")
+                            if delta:
+                                print(delta, end="", flush=True)
+                                full_reply.append(delta)
+                        except Exception:
+                            pass
+            print("\n")
+            history.append({"role": "assistant", "content": "".join(full_reply)})
+        except (KeyboardInterrupt, EOFError):
+            print("\n")
+            break
+
+def main():
+    if len(sys.argv) < 2:
+        interactive_chat()
+        return
+
+    first = sys.argv[1]
+    if first in ["--chat", "-c"]:
+        if len(sys.argv) > 2:
+            stream_chat(" ".join(sys.argv[2:]))
+        else:
+            interactive_chat()
+    elif first in ["--version", "-v"]:
+        print("pudding v1.0.0 (Clean Natural Language Terminal Bridge)")
+    elif first in ["--config"]:
+        print(json.dumps(CONFIG, indent=2))
+    else:
+        query = " ".join(sys.argv[1:])
+        handle_query(query)
+
+if __name__ == "__main__":
+    main()
