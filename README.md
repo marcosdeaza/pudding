@@ -1,182 +1,149 @@
-# pudding 🍮
+<div align="center">
 
-> **Clean, ultra-fast natural language bridge for your shell.**  
-> Zero external dependencies. Works with any OpenAI-compatible API, DeepSeek, or local Ollama. Anti-slop, minimal, and blazing fast.
+![pudding banner](assets/banner.png)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
-[![Python: 3.8+](https://img.shields.io/badge/Python-3.8+-black.svg)](https://www.python.org/)
-[![Shell: zsh%20%7C%20bash](https://img.shields.io/badge/Shell-zsh%20%7C%20bash-black.svg)](#)
-[![Zero Dependencies](https://img.shields.io/badge/Dependencies-Zero-black.svg)](#)
+# pudding
 
----
+**Natural language execution in your terminal.**  
+Zero dependencies. Works with any OpenAI-compatible endpoint (DeepSeek, Ollama, OpenAI). No daemons, no tracking, no bloat.
 
-## Why pudding?
-
-Most AI terminal assistants either require heavy background daemons, force you into proprietary terminal emulators, spam emojis, or dump raw confusing kernel metrics.
-
-**pudding** is different:
-- **Zero dependencies**: Written in pure Python 3 using only the standard library (`urllib`, `json`, `subprocess`). No `pip install`, no `node_modules`, no background daemons eating your battery.
-- **Provider agnostic**: Plug in **DeepSeek Flash**, **OpenAI ChatGPT**, local **Ollama** (100% offline & free), **Groq**, **LiteLLM**, or any OpenAI-compatible endpoint.
-- **Dual-mode intelligence**:
-  1. **Actions (Commands)**: Translates natural language requests into exact terminal commands (including multi-step commands chained with `&&`) and lets you execute them with a single keystroke (`Enter` or `S`).
-  2. **Mapped System Inspection**: When you ask about your machine (`how much memory is left`, `what ports are listening`, `what is my IP`), it inspects the system in <5ms and returns concise, human-friendly numbers. No kernel page dumps, no cryptic hex tables.
-- **Anti-slop**: No emojis, no markdown asterisk noise, no infinite loops. Pure Unix minimalism.
-- **Natural question marks**: Built with `unsetopt nomatch` so queries like `whats using my cpu now?` never fail with shell globbing errors.
+</div>
 
 ---
 
-## Recommended Terminal: Ghostty
+## What is it?
 
-While **pudding** runs in any terminal (**iTerm2**, **Alacritty**, **Kitty**, **Apple Terminal**, **tmux**), it was built and tested primarily on **[Ghostty](https://ghostty.org)** — the modern, GPU-accelerated terminal by Mitchell Hashimoto.
+Most terminal AI tools are either bloated electron apps, closed-source subscription services, background daemons chewing up CPU, or spam you with emojis and paragraphs of text.
 
-Check out the [`extras/`](extras/) folder for:
-- `extras/ghostty-noir.config`: High-contrast Noir monochrome theme (`#09090b` background, 94% opacity, transparent titlebar, full split keybindings).
-- `extras/starship-noir.toml`: Ultra-clean grayscale Starship prompt.
+**pudding** is a tiny, single-file bridge (~300 lines of standard library Python) hooked directly into your shell (`zsh` / `bash`):
+
+- **Zero dependencies**: Uses only Python standard library (`urllib`, `json`, `subprocess`). No `pip install`, no `node_modules`.
+- **Works with any endpoint**: DeepSeek, local Ollama (100% offline & free), OpenAI, Groq, LiteLLM, vLLM.
+- **Fast command generation**: Translates intent into the exact command (chained `&&`, flags, pipes) and prompts to run with a single keypress (`Enter`).
+- **Instant system queries**: Inspects RAM, disk, CPU, and network directly without dumping confusing kernel pages or raw tables.
+- **Clean output**: No markdown fluff, no emojis, no commentary. Just the command or the metric.
 
 ---
 
-## Quickstart
+## Install
 
-### 1. Clone & Install
+Run the 1-step installer:
+
 ```bash
-git clone https://github.com/MARKITOS-E/pudding.git
+git clone https://github.com/marcosdeaza/pudding.git
 cd pudding
 ./install.sh
+source ~/.zshrc    # or source ~/.bashrc
 ```
 
-### 2. Reload your shell
-```bash
-source ~/.zshrc   # or source ~/.bashrc
-```
+That's it. It installs `pudding` to `~/.local/bin` and adds the shell hook.
 
 ---
 
-## Configuration & Providers
+## Configuration
 
-**pudding** can be configured via environment variables or through `~/.config/pudding/config.json`.
+Set your model provider in `~/.zshrc` (or `~/.config/pudding/config.json`):
 
-### Option A: DeepSeek Flash (Recommended: <350ms, smart, affordable)
-Add to your `~/.zshrc` or `~/.bashrc`:
+### DeepSeek (Fast & Cheap)
 ```bash
-export PUDDING_API_BASE="https://api.deepseek.com/v1/chat/completions"
-export PUDDING_MODEL="deepseek-chat"
 export PUDDING_API_KEY="sk-your-deepseek-key"
+export PUDDING_MODEL="deepseek-chat"
+export PUDDING_API_BASE="https://api.deepseek.com/v1/chat/completions"
 ```
 
-### Option B: OpenAI / ChatGPT
-```bash
-export PUDDING_API_BASE="https://api.openai.com/v1/chat/completions"
-export PUDDING_MODEL="gpt-4o-mini"
-export PUDDING_API_KEY="sk-proj-your-openai-key"
-```
-
-### Option C: Local Ollama (100% Free, Private & Offline)
-Run local models (e.g. `llama3.2:3b` or `minicpm-v`):
+### Local Ollama (Free & Private)
 ```bash
 export PUDDING_API_BASE="http://localhost:11434/v1/chat/completions"
-export PUDDING_MODEL="llama3.2:3b"
+export PUDDING_MODEL="llama3.2"
 export PUDDING_API_KEY="ollama-local"
 ```
 
-### Option D: JSON Configuration File
-Create `~/.config/pudding/config.json`:
-```json
-{
-  "api_url": "https://api.deepseek.com/v1/chat/completions",
-  "model": "deepseek-chat",
-  "api_key": "sk-your-api-key"
-}
+### OpenAI
+```bash
+export PUDDING_API_KEY="sk-proj-your-openai-key"
+export PUDDING_MODEL="gpt-4o-mini"
+export PUDDING_API_BASE="https://api.openai.com/v1/chat/completions"
 ```
 
 ---
 
-## Usage
+## How to use
 
-### 1. The `?` Prefix (Fast Translation & Queries)
+### 1. The `?` trigger
+Prefix any request or question with `?`:
 
-#### System Inspections (Mapped human answers):
 ```bash
-~ › ? how much memory is left
-  › RAM: 6.3 GB free of 16.0 GB (9.7 GB in use)
-  › Disk: 215 GB free of 460 GB
-
-~ › ? what is my IP
-  › Local IP: 192.168.1.37 | Public IP: 88.17.104.151
-
-~ › ? can you check cpu usage now?
-  › CPU: 14.8% in use (top: WindowServer 4.1%, Spotify 3.2%)
-```
-
-#### Executable Commands:
-```bash
-~ › ? go to downloads
+~ › ? entra a descargas
   › cd ~/Downloads
   ¿Ejecutar? [S/n]
 
-~ › ? make a folder called api, enter it and create app.py
-  › mkdir -p api && cd api && touch app.py
+~ › ? compilar outer_product.cpp con g++ y optimizacion O3
+  › g++ -O3 -std=c++17 outer_product.cpp -o outer_product && ./outer_product
   ¿Ejecutar? [S/n]
 
-~ › ? stealth SYN scan with OS detection on 192.168.1.1
-  › sudo nmap -sS -O 192.168.1.1
+~ › ? cuanta ram me queda
+  › RAM: 6.2 GB libres de 16.0 GB (9.8 GB en uso)
+  › Disco: 215 GB libres de 460 GB
+
+~ › ? matar el proceso que usa el puerto 3000
+  › lsof -ti :3000 | xargs kill -9
   ¿Ejecutar? [S/n]
 ```
-*(Press **Enter** or **S** to execute immediately, or **n** to cancel).*
 
----
+Hit **Enter** or **S** to run, **n** to cancel.
 
-### 2. Direct Natural Language (No prefix required)
-If you type an instruction directly on your prompt:
+### 2. Direct natural language
+You don't even need the `?`. If you type a natural language sentence into your shell, pudding intercepts the `command_not_found` and translates it:
+
 ```bash
-~ › go to downloads
-  › cd ~/Downloads
+~ › entra a escritorio
+  › cd ~/Desktop
   ¿Ejecutar? [S/n]
 ```
-*Note: Only multi-word sentences are intercepted; standard command typos will not trigger AI calls.*
 
----
+### 3. Ask technical questions (`ai`)
+When you want quick answers or technical explanations directly in your terminal:
 
-### 3. Streaming Chat (`ai`)
-For direct technical explanations, troubleshooting, or cybersecurity concepts:
 ```bash
-# Single question
-ai "explain how an ARP spoofing attack works and how to detect it"
-
-# Interactive streaming chat session
-ai
+ai "diferencia entre std::vector y std::array en cpp"
+ai "como funciona un ataque SYN flood y como detectarlo con tcpdump"
 ```
 
 ---
 
-## Architecture & Project Structure
+## Terminal Setup (Ghostty)
+
+The screenshot above runs on **[Ghostty](https://ghostty.org)** with a monochrome dark aesthetic.
+
+If you want the exact same setup:
+- Copy `extras/ghostty-noir.config` to `~/.config/ghostty/config`
+- Copy `extras/starship-noir.toml` to `~/.config/starship.toml`
+
+---
+
+## Repository Structure
 
 ```
 pudding/
 ├── bin/
-│   └── pudding             # Standalone Python CLI (<300 lines, 0 dependencies)
+│   └── pudding             # Pure Python CLI (standard library only)
 ├── shell/
-│   ├── pudding.zsh         # Zsh integration (prefixed '?', nonomatch, handlers)
-│   └── pudding.bash        # Bash integration equivalent
+│   ├── pudding.zsh         # Zsh hook & aliases
+│   └── pudding.bash        # Bash hook & aliases
 ├── config/
-│   └── config.example.json # Example multi-provider template
+│   └── config.example.json # JSON config alternative
 ├── extras/
-│   ├── ghostty-noir.config # Recommended Ghostty monochrome theme
-│   └── starship-noir.toml  # Recommended Starship monochrome prompt
-├── .env.example            # Ready-to-copy environment templates
+│   ├── ghostty-noir.config # Minimal Ghostty theme
+│   └── starship-noir.toml  # Minimal Starship prompt
+├── assets/
+│   └── banner.png          # Terminal preview banner
 ├── install.sh              # 1-step installer
-├── uninstall.sh            # Clean uninstaller
-├── LICENSE                 # MIT License
-└── README.md
+├── uninstall.sh            # Clean removal script
+└── LICENSE                 # MIT
 ```
-
----
-
-## Contributing
-
-Pull requests and issues are welcome! Feel free to fork this repository, add new shell integrations, or optimize inspection commands.
 
 ---
 
 ## License
 
-MIT License. Copyright (c) 2026 Marcos de Aza. See [LICENSE](LICENSE) for details.
+MIT © Marcos de Aza
