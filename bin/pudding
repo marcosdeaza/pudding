@@ -133,30 +133,34 @@ def get_quick_sys_metrics():
 
     return "\n".join(parts)
 
-INTENT_PROMPT = """You are an expert Unix/macOS shell assistant.
+INTENT_PROMPT = """You are an expert Unix/macOS developer terminal assistant.
 Classify the user request into:
-1. "info": Asking for system information, resources, hardware, network, or status.
-   CRITICAL: Even if phrased conversationally or politely (e.g. 'puedes ver...', 'me dices...', 'mira...', 'quiero saber...', 'a ver...'), if it asks about system resources (cpu, ram, memory, disk, network, ip, ports, battery, processes, os version), IT IS ALWAYS "info"!
+1. "action": The user wants a terminal command to accomplish a task, OR asks what command to use, OR asks how to do something via CLI (even with colloquial phrasing, typos, or slang like "q comando se usa pa...", "dime comando...", "esucchamedime...", "como compilo x", "entra a descargas", "mata el proceso x").
+   - Support chained commands with "&&" or ";" if multiple steps are needed.
+   - Output the raw shell command(s). Never prepend natural words like "entra".
+   Output format: {"type": "action", "cmd": "<command>"}
+
+2. "info": The user is asking about the CURRENT LIVE SYSTEM STATE (hardware, resources, network, active processes, ports, memory, disk, cpu, battery, os):
    - Memory/Disk: "SPECIAL_SYS_METRICS"
    - CPU usage/processes: "ps -eo %cpu,comm | sort -k1 -rn | head -8"
    - Public/Local IP: "ifconfig en0 | grep 'inet '; curl -s --max-time 2 ifconfig.me 2>/dev/null"
    - Open listening ports: "lsof -iTCP -sTCP:LISTEN -P -n"
    - Battery: "pmset -g batt"
    - OS version: "sw_vers"
+   Output format: {"type": "info", "inspect_cmd": "<command>"}
 
-2. "action": Terminal execution (e.g. "entra a descargas", "crea carpeta x y entra", "haz un escaneo nmap a 10.0.0.1", "actualiza brew").
-   - Support chained commands with "&&" or ";" if multiple steps were requested.
-   - Output the exact shell command(s). Never prepend natural words like "entra".
+3. "explain": The user is asking an informational, troubleshooting, or technical question that doesn't need running a shell command (e.g. "por que no responde la ia", "que es una pipe en bash", "diferencia entre tcp y udp"):
+   - Provide a concise 1-2 line direct answer. No markdown noise, no emojis.
+   Output format: {"type": "explain", "answer": "<concise answer>"}
 
-3. "none": ONLY pure greetings with no question about the system or tasks ("hola", "hola q tal", "buenas").
+4. "none": ONLY pure greetings with no task, question, or request ("hola", "buenas", "que tal").
+   Output format: {"type": "none"}
 
-Output ONLY valid raw JSON:
-For info: {"type": "info", "inspect_cmd": "<command>"}
-For action: {"type": "action", "cmd": "<command>"}
-For none: {"type": "none"}
+Output ONLY valid raw JSON.
 """
 
 def handle_query(query):
+    # Clean trailing punctuation like question marks
     clean_query = query.strip().rstrip("?¿!. ")
     if not clean_query:
         print("NONE")
@@ -183,6 +187,12 @@ def handle_query(query):
             if cmd.startswith("$ ") or cmd.startswith("# "):
                 cmd = cmd[2:].strip()
             print(f"ACTION:{cmd}")
+            return
+
+        elif q_type == "explain":
+            ans = parsed.get("answer", "").strip()
+            ans = re.sub(r'[*`_]', '', ans).strip()
+            print(f"INFO:{ans}")
             return
             
         elif q_type == "info":
