@@ -77,40 +77,40 @@ export PUDDING_API_BASE="https://api.openai.com/v1/chat/completions"
 Prefix any request or question with `?`:
 
 ```bash
-~ › ? entra a descargas
+~ › ? go to downloads
   › cd ~/Downloads
-  ¿Ejecutar? [S/n]
+  Execute? [Y/n]
 
-~ › ? compilar outer_product.cpp con g++ y optimizacion O3
+~ › ? compile and run outer_product.cpp with O3
   › g++ -O3 -std=c++17 outer_product.cpp -o outer_product && ./outer_product
-  ¿Ejecutar? [S/n]
+  Execute? [Y/n]
 
-~ › ? cuanta ram me queda
-  › RAM: 6.2 GB libres de 16.0 GB (9.8 GB en uso)
-  › Disco: 215 GB libres de 460 GB
+~ › ? how much ram is free
+  › RAM: 6.2 GB free of 16.0 GB (9.8 GB in use)
+  › Disk: 215 GB free of 460 GB
 
-~ › ? matar el proceso que usa el puerto 3000
+~ › ? kill the process using port 3000
   › lsof -ti :3000 | xargs kill -9
-  ¿Ejecutar? [S/n]
+  Execute? [Y/n]
 ```
 
-Hit **Enter** or **S** to run, **n** to cancel.
+Hit **Enter** or **Y** to run, **n** to cancel.
 
 ### 2. Direct natural language
-You don't even need the `?`. If you type a natural language sentence into your shell, pudding intercepts the `command_not_found` and translates it:
+You don't even need the `?`. If you type a natural language sentence into your shell, pudding intercepts the command-not-found handler and translates it directly:
 
 ```bash
-~ › entra a escritorio
+~ › go to desktop
   › cd ~/Desktop
-  ¿Ejecutar? [S/n]
+  Execute? [Y/n]
 ```
 
 ### 3. Ask technical questions (`ai`)
 When you want quick answers or technical explanations directly in your terminal:
 
 ```bash
-ai "diferencia entre std::vector y std::array en cpp"
-ai "como funciona un ataque SYN flood y como detectarlo con tcpdump"
+ai "difference between std::vector and std::array in cpp"
+ai "how does a SYN flood attack work and how to detect it with tcpdump"
 ```
 
 ---
