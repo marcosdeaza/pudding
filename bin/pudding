@@ -145,34 +145,41 @@ def get_quick_sys_metrics():
     return "\n".join(parts)
 
 INTENT_PROMPT = """You are an expert Unix/macOS developer terminal assistant.
+Every user request is a natural language sentence or question typed into their shell.
+
 Classify the user request into:
-1. "action": The user wants a terminal command to accomplish a task, OR asks what command to use, OR asks how to do something via CLI (even with colloquial phrasing, typos, or slang like "q comando se usa pa...", "dime comando...", "esucchamedime...", "como compilo x", "entra a descargas", "mata el proceso x").
-   - Support chained commands with "&&" or ";" if multiple steps are needed.
-   - Output the raw shell command(s). Never prepend natural words like "entra".
+1. "action": The user wants to run a shell command, OR asks what command to use to perform a concrete task (e.g. "q comando se usa pa compilar y probar en cpp", "dime comando pa matar el puerto 8080", "busca x y entra", "entra a descargas", "crea un repo git").
+   RULES FOR ACTIONS:
+   - Provide the EXACT, production-ready command.
+   - If a file name is not specified (e.g. "compilar y probar en cpp"), use standard conventions (e.g. "g++ -std=c++17 -O2 main.cpp -o main && ./main").
+   - macOS search: ALWAYS prefer Spotlight `mdfind` (e.g. `mdfind -name "<keyword>"`). NEVER do recursive `find /` across the root filesystem.
+   - When searching for applications or tools where the colloquial query contains descriptive words (e.g. "luna launcher", "minecraft launcher", "discord app"), extract the core identifying keyword (e.g. `mdfind -name "luna"`, `mdfind -name "minecraft"`) so it reliably matches installed apps (e.g. Lunar Client.app).
+   - Multi-step search & enter: When the user asks to "find X and enter / cd into it" ("busca x y entra", "encuentra x y metete"), the command MUST find the matching directory/app bundle AND `cd` into it:
+     TARGET=$(mdfind -name "<keyword>" 2>/dev/null | grep -iE "\\.app|keyword" | head -1); [ -n "$TARGET" ] && cd "$TARGET" && pwd || echo "No encontrado"
+   - Support chained commands with "&&" or ";".
+   - Output ONLY the raw executable shell command.
    Output format: {"type": "action", "cmd": "<command>"}
 
-2. "info": The user is asking about the CURRENT LIVE SYSTEM STATE (hardware, resources, network, active processes, ports, memory, disk, cpu, battery, os):
-   - Memory/Disk: "SPECIAL_SYS_METRICS"
-   - CPU usage/processes: "ps -eo %cpu,comm | sort -k1 -rn | head -8"
-   - Public/Local IP: "ifconfig en0 | grep 'inet '; curl -s --max-time 2 ifconfig.me 2>/dev/null"
+2. "info": The user is asking about the LIVE SYSTEM STATE or hardware metrics (RAM, disk, CPU, network, active processes, open ports, battery, OS version):
+   - Memory / Disk: "SPECIAL_SYS_METRICS"
+   - CPU usage / processes: "ps -eo %cpu,comm | sort -k1 -rn | head -8"
+   - Public / Local IP: "ifconfig en0 | grep 'inet '; curl -s --max-time 2 ifconfig.me 2>/dev/null"
    - Open listening ports: "lsof -iTCP -sTCP:LISTEN -P -n"
    - Battery: "pmset -g batt"
    - OS version: "sw_vers"
    Output format: {"type": "info", "inspect_cmd": "<command>"}
 
-3. "explain": The user is asking an informational, troubleshooting, or technical question that doesn't need running a shell command (e.g. "por que no responde la ia", "que es una pipe en bash", "diferencia entre tcp y udp"):
-   - Provide a concise 1-2 line direct answer. No markdown noise, no emojis.
-   Output format: {"type": "explain", "answer": "<concise answer>"}
+3. "explain": The user is asking a conversational question, follow-up, troubleshooting inquiry, theoretical concept explanation, or greeting (e.g. "lo has encontrado?", "que es esto", "por que falla", "hola", "buenas", "que tal"):
+   - Provide a direct, concise 1-2 line answer in the user's language.
+   - NO markdown bold/italics (no asterisks), NO backticks, NO emojis, NO bullet points. Pure clean text.
+   Output format: {"type": "explain", "answer": "<concise 1-2 line answer>"}
 
-4. "none": ONLY pure greetings with no task, question, or request ("hola", "buenas", "que tal").
-   Output format: {"type": "none"}
-
-Output ONLY valid raw JSON.
+Output ONLY valid raw JSON. Never output "none" for valid multi-word requests.
 """
 
 def handle_query(query):
-    # Clean trailing punctuation like question marks
-    clean_query = query.strip().rstrip("?¿!. ")
+    # Clean leading/trailing quotes and spacing
+    clean_query = query.strip("'\" \t\r\n")
     if not clean_query:
         print("NONE")
         return
@@ -202,7 +209,7 @@ def handle_query(query):
 
         elif q_type == "explain":
             ans = parsed.get("answer", "").strip()
-            ans = re.sub(r'[*`_]', '', ans).strip()
+            ans = re.sub(r'[*`_#]', '', ans).strip()
             print(f"INFO:{ans}")
             return
             
@@ -240,11 +247,19 @@ def handle_query(query):
                 {"role": "user", "content": f"Pregunta: {clean_query}\nDatos reales del sistema:\n{raw_out[:2000]}"}
             ]
             answer = call_api(summary_prompt, max_tokens=180, temperature=0.1)
-            answer = re.sub(r'[*`_]', '', answer).strip()
+            answer = re.sub(r'[*`_#]', '', answer).strip()
             print(f"INFO:{answer}")
             return
             
         else:
+            if " " in clean_query:
+                ans = call_api([
+                    {"role": "system", "content": "Responde en 1 sola línea breve y clara sin formato markdown ni emojis."},
+                    {"role": "user", "content": clean_query}
+                ], max_tokens=100)
+                ans = re.sub(r'[*`_#]', '', ans).strip()
+                print(f"INFO:{ans}")
+                return
             print("NONE")
             return
             
