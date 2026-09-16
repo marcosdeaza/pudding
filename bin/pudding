@@ -16,59 +16,70 @@ DEFAULT_CONFIG_PATH = os.path.expanduser("~/.config/pudding/config.json")
 LEGACY_CONFIG_PATH = os.path.expanduser("~/.config/ai-sh/config.json")
 DEEPSEEK_KEY_FILE = os.path.expanduser("~/.deepseek_key")
 
+def is_placeholder_key(key):
+    if not key or not isinstance(key, str):
+        return True
+    k = key.lower()
+    return "tu-api-key" in k or "your-" in k or "example" in k or k.startswith("sk-tu-") or k.startswith("sk-your-")
+
 def load_config():
-    # Detect environment defaults
-    api_url = os.environ.get("PUDDING_API_BASE")
-    model = os.environ.get("PUDDING_MODEL")
-    api_key = os.environ.get("PUDDING_API_KEY")
-
-    # If DeepSeek key provided
-    if not api_key and os.environ.get("DEEPSEEK_API_KEY"):
-        api_key = os.environ.get("DEEPSEEK_API_KEY")
-        if not api_url:
-            api_url = "https://api.deepseek.com/v1/chat/completions"
-        if not model:
-            model = "deepseek-chat"
-
-    # Fallback to key file
-    if not api_key and os.path.exists(DEEPSEEK_KEY_FILE):
-        try:
-            with open(DEEPSEEK_KEY_FILE, "r", encoding="utf-8") as f:
-                k = f.read().strip()
-                if k:
-                    api_key = k
-                    if not api_url:
-                        api_url = "https://api.deepseek.com/v1/chat/completions"
-                    if not model:
-                        model = "deepseek-chat"
-        except Exception:
-            pass
-
-    # If OpenAI key provided (ignore dummy ollama keys)
-    if not api_key and os.environ.get("OPENAI_API_KEY") and os.environ.get("OPENAI_API_KEY") != "ollama-local":
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_url:
-            api_url = "https://api.openai.com/v1/chat/completions"
-        if not model:
-            model = "gpt-4o-mini"
-
-
+    # 1. Base defaults
     config = {
-        "api_url": api_url or "https://api.deepseek.com/v1/chat/completions",
-        "model": model or "deepseek-chat",
-        "api_key": api_key or ""
+        "api_url": "https://api.deepseek.com/v1/chat/completions",
+        "model": "deepseek-chat",
+        "api_key": ""
     }
 
-    # Load from config file
+    # 2. Config file (lowest priority, placeholder keys are ignored)
     for p in [DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH]:
         if os.path.exists(p):
             try:
                 with open(p, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
-                    config.update({k: v for k, v in cfg.items() if v})
+                    for k, v in cfg.items():
+                        if k == "api_key":
+                            if v and not is_placeholder_key(v):
+                                config["api_key"] = v
+                        elif v:
+                            config[k] = v
                     break
             except Exception:
                 pass
+
+    # 3. Dedicated environment variables (override config file)
+    if os.environ.get("PUDDING_API_BASE"):
+        config["api_url"] = os.environ.get("PUDDING_API_BASE")
+    if os.environ.get("PUDDING_MODEL"):
+        config["model"] = os.environ.get("PUDDING_MODEL")
+    if os.environ.get("PUDDING_API_KEY") and not is_placeholder_key(os.environ.get("PUDDING_API_KEY")):
+        config["api_key"] = os.environ.get("PUDDING_API_KEY")
+
+    # 4. DeepSeek key from env
+    if not config["api_key"] and os.environ.get("DEEPSEEK_API_KEY") and not is_placeholder_key(os.environ.get("DEEPSEEK_API_KEY")):
+        config["api_key"] = os.environ.get("DEEPSEEK_API_KEY")
+        if "deepseek" not in config["api_url"]:
+            config["api_url"] = "https://api.deepseek.com/v1/chat/completions"
+            config["model"] = "deepseek-chat"
+
+    # 5. Key file ~/.deepseek_key
+    if not config["api_key"] and os.path.exists(DEEPSEEK_KEY_FILE):
+        try:
+            with open(DEEPSEEK_KEY_FILE, "r", encoding="utf-8") as f:
+                k = f.read().strip()
+                if k and not is_placeholder_key(k):
+                    config["api_key"] = k
+                    if "deepseek" not in config["api_url"]:
+                        config["api_url"] = "https://api.deepseek.com/v1/chat/completions"
+                        config["model"] = "deepseek-chat"
+        except Exception:
+            pass
+
+    # 6. OpenAI key from env
+    if not config["api_key"] and os.environ.get("OPENAI_API_KEY") and os.environ.get("OPENAI_API_KEY") != "ollama-local" and not is_placeholder_key(os.environ.get("OPENAI_API_KEY")):
+        config["api_key"] = os.environ.get("OPENAI_API_KEY")
+        if "openai" not in config["api_url"]:
+            config["api_url"] = "https://api.openai.com/v1/chat/completions"
+            config["model"] = "gpt-4o-mini"
 
     return config
 

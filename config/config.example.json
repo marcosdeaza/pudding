@@ -1,12 +1,12 @@
 {
   "api_url": "https://api.deepseek.com/v1/chat/completions",
   "model": "deepseek-chat",
-  "api_key": "sk-tu-api-key-de-deepseek",
+  "api_key": "sk-your-deepseek-key",
   "_comments": {
     "openai_example": {
       "api_url": "https://api.openai.com/v1/chat/completions",
       "model": "gpt-4o-mini",
-      "api_key": "sk-tu-api-key-de-openai"
+      "api_key": "sk-your-openai-key"
     },
     "ollama_local_example": {
       "api_url": "http://localhost:11434/v1/chat/completions",
@@ -16,7 +16,7 @@
     "groq_example": {
       "api_url": "https://api.groq.com/openai/v1/chat/completions",
       "model": "llama-3.3-70b-versatile",
-      "api_key": "gsk_tu-api-key-de-groq"
+      "api_key": "gsk_your-groq-key"
     }
   }
 }
