@@ -171,44 +171,65 @@ def append_history(query, response_summary):
     except Exception:
         pass
 
-INTENT_PROMPT = """You are an expert Unix/macOS developer terminal assistant.
-You are embedded directly inside the user's shell. You have full environmental awareness:
-- Current working directory (CWD)
-- Visible folders/files inside the CWD
-- Recent command history and interactions in this terminal session
+def extract_json_payload(text):
+    if not text:
+        return None
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    m = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except Exception:
+            pass
+    start = text.find('{')
+    end = text.rfind('}')
+    if start != -1 and end > start:
+        try:
+            return json.loads(text[start:end+1])
+        except Exception:
+            pass
+    return None
 
-Classify the user request into:
-1. "action": The user wants to run shell command(s) to accomplish a task.
-   RULES FOR ACTIONS:
-   - Provide the EXACT, production-ready command(s).
-   - Context-awareness: Use the CWD and visible files/folders to determine the right relative or absolute paths.
-   - Multi-step tasks: If accomplishing the user's goal requires multiple commands (e.g. check + enter, or compile + execute, or make directory + cd), chain them with "&&" or write robust shell syntax.
-   - macOS search: ALWAYS prefer Spotlight `mdfind` (e.g. `mdfind -name "<keyword>"`). NEVER do recursive `find /` across the root filesystem.
-   - When searching for applications or tools where the query contains descriptive words (e.g. "luna launcher", "minecraft launcher", "discord app"), extract the core identifying keyword (e.g. `mdfind -name "luna"`, `mdfind -name "minecraft"`) so it reliably matches installed apps (e.g. Lunar Client.app).
-   - Multi-step search & enter: When the user asks to "find X and enter / cd into it" ("busca x y entra", "encuentra x y metete"), the command MUST find the matching directory/app bundle AND `cd` into it:
-     TARGET=$(mdfind -name "<keyword>" 2>/dev/null | grep -iE "\\.app|keyword" | head -1); [ -n "$TARGET" ] && cd "$TARGET" && pwd || echo "No encontrado"
-   - Output ONLY the raw executable shell command.
+INTENT_PROMPT = """You are an expert Unix/macOS developer terminal engine.
+Your role is to translate developer intent into autonomous, robust shell commands or provide cold, analytical, concise system insights.
+
+You have full environmental telemetry:
+- Working Directory (CWD)
+- Directory Contents (visible folders/files)
+- Recent Session History (prior user actions in this shell)
+
+CLASSIFY AND FORMAT USER REQUESTS:
+1. "action": An executable terminal command is required to autonomously fulfill the user objective.
+   ENGINEERING REQUIREMENTS FOR COMMANDS:
+   - Autonomous & Self-Sufficient: Commands must succeed without interactive prompts (use -p for mkdir, -y for package managers where applicable).
+   - Defensive Chaining: Chain sequential dependencies using "&&" so failure in step 1 halts subsequent execution.
+   - Path Quoting: Always quote variables and paths containing spaces or potential special characters ("$TARGET", "$HOME/...").
+   - Telemetry Utilization: If user references a local file (e.g. "compila el cpp"), look at Directory Contents to extract the exact filename.
+   - macOS Native: For searching files/apps, use Spotlight `mdfind` (e.g. `mdfind -name "<core_stem>"`). NEVER use recursive root `find /`.
+   - Find & Enter: When user asks to find and enter ("busca x y entra"), resolve the path and cd:
+     TARGET=$(mdfind -name "<core_stem>" 2>/dev/null | head -1); [ -n "$TARGET" ] && cd "$([ -d "$TARGET" ] && echo "$TARGET" || dirname "$TARGET")" && pwd || echo "No encontrado"
    Output format: {"type": "action", "cmd": "<command>"}
 
-2. "info": The user is asking about LIVE SYSTEM METRICS or hardware status (RAM, disk, CPU, network, active processes, open ports, battery, OS version):
-   - Memory / Disk: "SPECIAL_SYS_METRICS"
-   - CPU usage / processes: "ps -eo %cpu,comm | sort -k1 -rn | head -8"
-   - Public / Local IP: "ifconfig en0 | grep 'inet '; curl -s --max-time 2 ifconfig.me 2>/dev/null"
-   - Open listening ports: "lsof -iTCP -sTCP:LISTEN -P -n"
-   - Battery: "pmset -g batt"
-   - OS version: "sw_vers"
+2. "info": Inquiries regarding live system telemetry (RAM, disk, CPU, ports, network, hardware):
+   - Memory & Disk: "SPECIAL_SYS_METRICS"
+   - CPU / Top Consumers: "ps -eo %cpu,comm | sort -k1 -rn | head -8"
+   - IP / Network Interfaces: "ifconfig en0 | grep \"inet \"; curl -s --max-time 2 ifconfig.me 2>/dev/null"
+   - Open TCP Ports: "lsof -iTCP -sTCP:LISTEN -P -n"
    Output format: {"type": "info", "inspect_cmd": "<command>"}
 
-3. "explain": The user is asking a conversational question, follow-up, troubleshooting inquiry, OR asks to find/enter something that clearly DOES NOT exist based on CWD and visible contents:
-   - Proactive awareness: If the user asks to look for something ("busca carpeta descargas y si la ves metete") and you can see from the visible contents that no such folder exists in CWD (e.g. inside an .app bundle), DO NOT execute a redundant search that loops back to the same folder. Explain concisely that it doesn't exist here and where it can be found (e.g. "No hay carpeta de descargas dentro de Lunar Client.app (solo Contents/). Tus descargas están en ~/Downloads y los datos de Lunar en ~/Library/Application Support/lunarclient.").
-   - Concise 1-2 lines, clean text, NO emojis, NO markdown formatting (no asterisks, no backticks).
-   Output format: {"type": "explain", "answer": "<concise 1-2 line answer>"}
+3. "explain": Conversational inquiry, technical question, troubleshooting, or verification of an asset that DOES NOT exist based on Telemetry:
+   - Pragmatic, analytical, cold tone. Zero conversational filler, zero politeness rituals, zero emojis, zero markdown bold/asterisks.
+   - State facts directly in 1-2 lines.
+   Output format: {"type": "explain", "answer": "<concise analytical answer>"}
 
-Output ONLY valid raw JSON. Never output "none" for valid multi-word requests.
+Output strictly valid raw JSON.
 """
 
 def handle_query(query):
-    # Clean leading/trailing quotes and spacing
     clean_query = query.strip("'\" \t\r\n")
     if not clean_query:
         print("NONE")
@@ -244,11 +265,10 @@ def handle_query(query):
             {"role": "user", "content": user_msg}
         ], max_tokens=250)
         
-        clean_res = raw_res
-        if "```" in clean_res:
-            clean_res = clean_res.replace("```json", "").replace("```", "").strip()
-        
-        parsed = json.loads(clean_res)
+        parsed = extract_json_payload(raw_res)
+        if not parsed:
+            raise ValueError("Invalid JSON response")
+
         q_type = parsed.get("type", "none")
         
         if q_type == "action":
@@ -308,7 +328,7 @@ def handle_query(query):
         else:
             if " " in clean_query:
                 ans = call_api([
-                    {"role": "system", "content": "Responde en 1 sola línea breve y clara sin formato markdown ni emojis."},
+                    {"role": "system", "content": "Responde de forma fría, analítica y directa en 1 sola línea sin formato markdown ni emojis."},
                     {"role": "user", "content": clean_query}
                 ], max_tokens=100)
                 ans = re.sub(r'[*`_#]', '', ans).strip()
@@ -321,7 +341,7 @@ def handle_query(query):
     except Exception:
         try:
             fallback = call_api([
-                {"role": "system", "content": "You are a shell command translator. Output ONLY the raw command. No markdown, no commentary."},
+                {"role": "system", "content": "You are a shell command translator. Output ONLY the raw executable shell command. No markdown, no commentary."},
                 {"role": "user", "content": clean_query}
             ], max_tokens=150)
             if fallback and not fallback.startswith("```"):
