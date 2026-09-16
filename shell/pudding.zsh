@@ -7,11 +7,29 @@
 # Allow natural queries ending with '?' without zsh globbing error
 unsetopt nomatch
 
+autoload -Uz add-zsh-hook
+
+# Communication channel between subshell (command_not_found_handler) and parent shell
+_pudding_exec_file="/tmp/.pudding_exec_$$"
+
+_pudding_precmd() {
+    if [[ -f "$_pudding_exec_file" ]]; then
+        local _pudding_to_run
+        _pudding_to_run=$(<"$_pudding_exec_file")
+        rm -f "$_pudding_exec_file"
+        if [[ -n "$_pudding_to_run" ]]; then
+            print -s "$_pudding_to_run" 2>/dev/null || true
+            eval "$_pudding_to_run"
+        fi
+    fi
+}
+add-zsh-hook precmd _pudding_precmd
+
 # Prefix "?" for natural language commands and system questions
 # Examples:
 #   ? entra a descargas
 #   ? cuanta memoria me queda
-#   ? escaneo sigiloso nmap a 192.168.1.1
+#   ? compilar outer_product.cpp con g++
 _pudding_query() {
     if [[ $# -eq 0 ]]; then
         echo "  Uso: ? <instrucción o consulta>"
@@ -38,39 +56,25 @@ _pudding_query() {
     fi
 
     # Executable action command(s)
-    if [[ "$raw_res" == ACTION:* ]]; then
-        local cmd="${raw_res#ACTION:}"
-        echo ""
-        echo -e "  \033[1;37m›\033[0m \033[1;32m$cmd\033[0m"
-        echo ""
-        echo -n "  ¿Ejecutar? [S/n] "
-        read -r confirm
-        if [[ -z "$confirm" || "$confirm" =~ ^[sSyY]$ ]]; then
-            eval "$cmd"
-        else
-            echo "  — Cancelado."
-        fi
-        return 0
-    fi
+    local cmd="$raw_res"
+    [[ "$raw_res" == ACTION:* ]] && cmd="${raw_res#ACTION:}"
 
-    # Fallback
     echo ""
-    echo -e "  \033[1;37m›\033[0m \033[1;32m$raw_res\033[0m"
+    echo -e "  \033[1;37m›\033[0m \033[1;32m$cmd\033[0m"
     echo ""
     echo -n "  ¿Ejecutar? [S/n] "
     read -r confirm
     if [[ -z "$confirm" || "$confirm" =~ ^[sSyY]$ ]]; then
-        eval "$raw_res"
+        print -s "$cmd" 2>/dev/null || true
+        eval "$cmd"
     else
         echo "  — Cancelado."
     fi
+    return 0
 }
 alias '?'='noglob _pudding_query'
 
-# Interactive and direct streaming chat
-# Examples:
-#   ai "explica cómo funciona un buffer overflow"
-#   ai
+# Direct streaming chat
 ai() {
     pudding --chat "$@"
 }
@@ -86,7 +90,7 @@ command_not_found_handler() {
 
     local full_cmd="$*"
 
-    # Only process multi-word sentences to avoid intercepting typos
+    # Only process multi-word sentences to avoid intercepting genuine typos
     if [[ "$full_cmd" == *" "* ]]; then
         local raw_res
         raw_res=$(pudding "$full_cmd" 2>/dev/null)
@@ -107,11 +111,9 @@ command_not_found_handler() {
             echo -n "  ¿Ejecutar? [S/n] "
             read -r confirm
             if [[ -z "$confirm" || "$confirm" =~ ^[sSyY]$ ]]; then
-                _PUDDING_RECURSION_GUARD=1
-                eval "$cmd"
-                local ret=$?
-                _PUDDING_RECURSION_GUARD=0
-                return $ret
+                # Queue execution in the parent shell so builtins (cd, export, etc.) affect the active session
+                echo "$cmd" > "$_pudding_exec_file"
+                return 0
             else
                 echo "  — Cancelado."
                 return 0
