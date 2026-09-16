@@ -4,6 +4,7 @@
 #    source /path/to/pudding/shell/pudding.bash
 # ═════════════════════════════════════════════════════════════════════
 
+export PUDDING_SESSION_ID="$$"
 _pudding_exec_file="/tmp/.pudding_exec_$$"
 
 _pudding_bash_precmd() {

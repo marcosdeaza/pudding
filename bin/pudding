@@ -144,23 +144,53 @@ def get_quick_sys_metrics():
 
     return "\n".join(parts)
 
+SESSION_ID = os.environ.get("PUDDING_SESSION_ID", str(os.getppid()))
+HIST_FILE = f"/tmp/.pudding_hist_{SESSION_ID}"
+
+def get_recent_history(max_entries=4):
+    if not os.path.exists(HIST_FILE):
+        return ""
+    try:
+        with open(HIST_FILE, "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f if line.strip()]
+        recent = lines[-max_entries:]
+        return "\n".join(f"- {l}" for l in recent) if recent else ""
+    except Exception:
+        return ""
+
+def append_history(query, response_summary):
+    try:
+        lines = []
+        if os.path.exists(HIST_FILE):
+            with open(HIST_FILE, "r", encoding="utf-8") as f:
+                lines = [line.strip() for line in f if line.strip()]
+        lines.append(f"User: {query} -> {response_summary}")
+        lines = lines[-10:]
+        with open(HIST_FILE, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+    except Exception:
+        pass
+
 INTENT_PROMPT = """You are an expert Unix/macOS developer terminal assistant.
-Every user request is a natural language sentence or question typed into their shell.
+You are embedded directly inside the user's shell. You have full environmental awareness:
+- Current working directory (CWD)
+- Visible folders/files inside the CWD
+- Recent command history and interactions in this terminal session
 
 Classify the user request into:
-1. "action": The user wants to run a shell command, OR asks what command to use to perform a concrete task (e.g. "q comando se usa pa compilar y probar en cpp", "dime comando pa matar el puerto 8080", "busca x y entra", "entra a descargas", "crea un repo git").
+1. "action": The user wants to run shell command(s) to accomplish a task.
    RULES FOR ACTIONS:
-   - Provide the EXACT, production-ready command.
-   - If a file name is not specified (e.g. "compilar y probar en cpp"), use standard conventions (e.g. "g++ -std=c++17 -O2 main.cpp -o main && ./main").
+   - Provide the EXACT, production-ready command(s).
+   - Context-awareness: Use the CWD and visible files/folders to determine the right relative or absolute paths.
+   - Multi-step tasks: If accomplishing the user's goal requires multiple commands (e.g. check + enter, or compile + execute, or make directory + cd), chain them with "&&" or write robust shell syntax.
    - macOS search: ALWAYS prefer Spotlight `mdfind` (e.g. `mdfind -name "<keyword>"`). NEVER do recursive `find /` across the root filesystem.
-   - When searching for applications or tools where the colloquial query contains descriptive words (e.g. "luna launcher", "minecraft launcher", "discord app"), extract the core identifying keyword (e.g. `mdfind -name "luna"`, `mdfind -name "minecraft"`) so it reliably matches installed apps (e.g. Lunar Client.app).
+   - When searching for applications or tools where the query contains descriptive words (e.g. "luna launcher", "minecraft launcher", "discord app"), extract the core identifying keyword (e.g. `mdfind -name "luna"`, `mdfind -name "minecraft"`) so it reliably matches installed apps (e.g. Lunar Client.app).
    - Multi-step search & enter: When the user asks to "find X and enter / cd into it" ("busca x y entra", "encuentra x y metete"), the command MUST find the matching directory/app bundle AND `cd` into it:
      TARGET=$(mdfind -name "<keyword>" 2>/dev/null | grep -iE "\\.app|keyword" | head -1); [ -n "$TARGET" ] && cd "$TARGET" && pwd || echo "No encontrado"
-   - Support chained commands with "&&" or ";".
    - Output ONLY the raw executable shell command.
    Output format: {"type": "action", "cmd": "<command>"}
 
-2. "info": The user is asking about the LIVE SYSTEM STATE or hardware metrics (RAM, disk, CPU, network, active processes, open ports, battery, OS version):
+2. "info": The user is asking about LIVE SYSTEM METRICS or hardware status (RAM, disk, CPU, network, active processes, open ports, battery, OS version):
    - Memory / Disk: "SPECIAL_SYS_METRICS"
    - CPU usage / processes: "ps -eo %cpu,comm | sort -k1 -rn | head -8"
    - Public / Local IP: "ifconfig en0 | grep 'inet '; curl -s --max-time 2 ifconfig.me 2>/dev/null"
@@ -169,9 +199,9 @@ Classify the user request into:
    - OS version: "sw_vers"
    Output format: {"type": "info", "inspect_cmd": "<command>"}
 
-3. "explain": The user is asking a conversational question, follow-up, troubleshooting inquiry, theoretical concept explanation, or greeting (e.g. "lo has encontrado?", "que es esto", "por que falla", "hola", "buenas", "que tal"):
-   - Provide a direct, concise 1-2 line answer in the user's language.
-   - NO markdown bold/italics (no asterisks), NO backticks, NO emojis, NO bullet points. Pure clean text.
+3. "explain": The user is asking a conversational question, follow-up, troubleshooting inquiry, OR asks to find/enter something that clearly DOES NOT exist based on CWD and visible contents:
+   - Proactive awareness: If the user asks to look for something ("busca carpeta descargas y si la ves metete") and you can see from the visible contents that no such folder exists in CWD (e.g. inside an .app bundle), DO NOT execute a redundant search that loops back to the same folder. Explain concisely that it doesn't exist here and where it can be found (e.g. "No hay carpeta de descargas dentro de Lunar Client.app (solo Contents/). Tus descargas están en ~/Downloads y los datos de Lunar en ~/Library/Application Support/lunarclient.").
+   - Concise 1-2 lines, clean text, NO emojis, NO markdown formatting (no asterisks, no backticks).
    Output format: {"type": "explain", "answer": "<concise 1-2 line answer>"}
 
 Output ONLY valid raw JSON. Never output "none" for valid multi-word requests.
@@ -185,7 +215,28 @@ def handle_query(query):
         return
 
     cwd = os.getcwd()
-    user_msg = f"Current working directory: {cwd}\nUser request: {clean_query}"
+    try:
+        items = os.listdir(cwd)
+        dirs = [f"{d}/" for d in items if os.path.isdir(os.path.join(cwd, d)) and not d.startswith(".")]
+        files = [f for f in items if os.path.isfile(os.path.join(cwd, d)) and not f.startswith(".")]
+        parts = []
+        if dirs:
+            parts.append("Dirs: " + ", ".join(dirs[:12]))
+        if files:
+            parts.append("Files: " + ", ".join(files[:12]))
+        dir_summary = " | ".join(parts) if parts else "(empty or hidden)"
+    except Exception:
+        dir_summary = "(inaccessible)"
+
+    recent_hist = get_recent_history()
+    
+    user_msg_parts = [f"Current working directory: {cwd}"]
+    user_msg_parts.append(f"Directory contents: {dir_summary}")
+    if recent_hist:
+        user_msg_parts.append(f"Recent session history:\n{recent_hist}")
+    user_msg_parts.append(f"User request: {clean_query}")
+    
+    user_msg = "\n".join(user_msg_parts)
     
     try:
         raw_res = call_api([
@@ -204,16 +255,19 @@ def handle_query(query):
             cmd = parsed.get("cmd", "").strip()
             if cmd.startswith("$ ") or cmd.startswith("# "):
                 cmd = cmd[2:].strip()
+            append_history(clean_query, f"Action: {cmd}")
             print(f"ACTION:{cmd}")
             return
 
         elif q_type == "explain":
             ans = parsed.get("answer", "").strip()
             ans = re.sub(r'[*`_#]', '', ans).strip()
+            append_history(clean_query, f"Answer: {ans}")
             print(f"INFO:{ans}")
             return
             
         elif q_type == "info":
+            append_history(clean_query, "Info query")
             inspect_cmd = parsed.get("inspect_cmd", "").strip()
             if inspect_cmd == "SPECIAL_SYS_METRICS" or any(w in clean_query.lower() for w in ["memoria", "ram", "disco", "almacenamiento", "espacio"]):
                 raw_out = get_quick_sys_metrics()
@@ -258,6 +312,7 @@ def handle_query(query):
                     {"role": "user", "content": clean_query}
                 ], max_tokens=100)
                 ans = re.sub(r'[*`_#]', '', ans).strip()
+                append_history(clean_query, f"Answer: {ans}")
                 print(f"INFO:{ans}")
                 return
             print("NONE")

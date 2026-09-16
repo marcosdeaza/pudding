@@ -7,6 +7,8 @@
 # Allow natural queries ending with '?' without zsh globbing error
 unsetopt nomatch
 
+export PUDDING_SESSION_ID="$$"
+
 autoload -Uz add-zsh-hook
 
 # Communication channel between subshell (command_not_found_handler) and parent shell
