@@ -1,0 +1,22 @@
+# Local secrets and keys
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*id_rsa*
+
+# Local machine configs with real keys
+config/config.json
+
+# Cache & build
+__pycache__/
+*.py[cod]
+*$py.class
+
+# System & IDE files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~

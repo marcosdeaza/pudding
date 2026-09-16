@@ -7,6 +7,10 @@
 **Natural language execution in your terminal.**  
 Zero dependencies. Works with any OpenAI-compatible endpoint (DeepSeek, Ollama, OpenAI). No daemons, no tracking, no bloat.
 
+<br/>
+
+![pudding in action](assets/demo.gif)
+
 </div>
 
 ---
