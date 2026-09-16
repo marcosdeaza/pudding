@@ -113,9 +113,9 @@ ai "como funciona un ataque SYN flood y como detectarlo con tcpdump"
 
 ## Terminal Setup (Ghostty)
 
-The screenshot above runs on **[Ghostty](https://ghostty.org)** with a monochrome dark aesthetic.
+**pudding** works in any shell/terminal, but pairs especially well with **[Ghostty](https://ghostty.org)** and a clean monochrome aesthetic.
 
-If you want the exact same setup:
+If you want the minimal setup:
 - Copy `extras/ghostty-noir.config` to `~/.config/ghostty/config`
 - Copy `extras/starship-noir.toml` to `~/.config/starship.toml`
 
