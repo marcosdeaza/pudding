@@ -9,7 +9,7 @@ Zero dependencies. Works with any OpenAI-compatible endpoint (DeepSeek, Ollama, 
 
 <br/>
 
-![pudding in action](assets/demo.gif)
+![pudding in action](assets/terminal_demo.gif)
 
 </div>
 
